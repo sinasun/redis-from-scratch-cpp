@@ -8,7 +8,7 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 
-#include "utils.h"
+#include "../utils/utils.h"
 
 static void do_something(int connection_fd) {
 	char rbuf[64] = {};
@@ -17,7 +17,7 @@ static void do_something(int connection_fd) {
 		msg("read() erorr");
 		return;
 	}
-	std::cout << "client says:" << rbuf << std::endl;
+	std::cout << "client says: " << rbuf << std::endl;
 
 	char wbuf[] = "world";
 	write(connection_fd, wbuf, strlen(wbuf));
@@ -54,7 +54,7 @@ int main() {
 			continue;
 		}
 
-		//do_somethin(connection_fd)
+		do_something(connection_fd);
 		close(connection_fd);
 
 	}
