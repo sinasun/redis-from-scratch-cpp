@@ -46,7 +46,7 @@ static int32_t one_request(int connection_fd) {
 	errno = 0;
 
 	int32_t err = read_full(connection_fd, read_header_buffer, 4);
-	if (err <= 0) {
+	if (err) {
 		if (errno == 0) {
 			msg("EOF");		
 		} else {
