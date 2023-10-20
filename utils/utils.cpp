@@ -7,5 +7,4 @@ void die(const std::string& msg) {
 
 void msg(const std::string& msg) {
 	std::cout << msg << std::endl;
-	exit(1);
 }
