@@ -8,9 +8,10 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
-#include <iostream>
 
 #include "../utils/utils.h"
+
+const size_t k_max_msg = 4096;
 
 static int32_t read_full(int fd, char* buf, size_t n) {
 	while (n > 0) {
@@ -48,6 +49,36 @@ static int32_t query(int connection_fd, const char* body) {
 	if (err) {
 		return err;
 	}
+
+	//read
+	errno = 0;
+
+	char read_header_buffer[4];
+	char read_body_buffer[k_max_msg + 1];
+	err = read_full(connection_fd, read_header_buffer, 4);
+	if (err) {
+		if (errno == 0) {
+			msg("EOF");
+		} else {
+			msg("read() error");
+		}
+		return err;
+	}
+
+	memcpy(&len, read_header_buffer, 4);
+	if (len >= k_max_msg) {
+		msg("Message too long");
+		return -1;
+	}
+
+	err = read_full(connection_fd, read_body_buffer, len);
+	if (err) {
+		msg("read() error");
+		return err;
+	}
+	read_body_buffer[len] = '\0';
+	std::cout << "server says: " << read_body_buffer << std::endl;
+
 	return 0;
 }
 
