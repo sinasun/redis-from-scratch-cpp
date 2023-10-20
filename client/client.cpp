@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,45 @@
 #include <iostream>
 
 #include "../utils/utils.h"
+
+static int32_t read_full(int fd, char* buf, size_t n) {
+	while (n > 0) {
+		ssize_t rv = read(fd, buf, n);
+		if (rv <= 0) {
+			return -1;
+		}
+		assert((size_t) rv <= n);
+		n -= (size_t) rv;
+		buf += rv;
+	}
+	return 0;
+}
+
+static int32_t write_all(int fd, char* buf, size_t n) {
+	while (n > 0) {
+		int rv = write(fd, buf, n);
+		if (rv <= 0) {
+			return -1;
+		}
+		assert((size_t) rv <= n);
+		n -= (size_t) rv;
+		buf += rv;
+	}
+	return 0;
+}
+
+static int32_t query(int connection_fd, const char* body) {
+	uint32_t len = (uint32_t) strlen(body);
+	char write_buffer[len + 4];
+	memcpy(write_buffer, &len, 4);
+	memcpy(write_buffer + 4, body, len);
+
+	int32_t err = write_all(connection_fd, write_buffer, len + 4);
+	if (err) {
+		return err;
+	}
+	return 0;
+}
 
 int main() {
 	int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -27,15 +67,7 @@ int main() {
 		die("connect()");
 	}
 
-	char msg[] = "hello";
-	write(fd, msg, strlen(msg));
-
-	char rbuf[64] = {};
-	ssize_t n = read(fd, rbuf, sizeof(rbuf) - 1);
-	if (n < 0) {
-		die("read()");
-	}
-
-	std::cout << "server says: " << rbuf << std::endl;
+	query(fd, "hello1");
+	query(fd, "hello2");
 	close(fd);
 }
