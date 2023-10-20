@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,17 +11,76 @@
 
 #include "../utils/utils.h"
 
-static void do_something(int connection_fd) {
-	char rbuf[64] = {};
-	ssize_t n = read(connection_fd, rbuf, sizeof(rbuf) - 1);
-	if (n < 0) {
-		msg("read() erorr");
-		return;
-	}
-	std::cout << "client says: " << rbuf << std::endl;
+const size_t k_max_msg = 4096;
 
-	char wbuf[] = "world";
-	write(connection_fd, wbuf, strlen(wbuf));
+static int32_t read_full(int fd, char *buf, size_t n) {
+	while (n > 0) {
+		ssize_t rv = read(fd, buf, n);
+		if (rv <= 0) {
+			return -1;
+		}
+		assert((size_t) rv <= n);
+		n -= (size_t) rv;
+		buf += rv;
+	}
+	return 0;
+}
+
+static int32_t write_all(int fd, const char *buf, size_t n) {
+	while (n > 0) {
+		ssize_t rv = write(fd, buf, n);
+		if (rv <= 0) {
+			return -1;
+		}
+		assert((size_t) rv <= n);
+		n -= (size_t) rv;
+		buf += rv;
+	}
+
+	return 0;
+}
+
+static int32_t one_request(int connection_fd) {
+	char read_header_buffer[4];
+	char read_body_buffer[k_max_msg + 1];
+	errno = 0;
+
+	int32_t err = read_full(connection_fd, read_header_buffer, 4);
+	if (err <= 0) {
+		if (errno == 0) {
+			msg("EOF");		
+		} else {
+			msg("read() error");
+		}
+		return err;
+	}
+	
+	uint32_t len = 0;
+	memcpy(&len, read_header_buffer, 4);
+	if (len >= k_max_msg) {
+		msg("Message too long");
+		return -1;
+	}
+
+	err = read_full(connection_fd, read_body_buffer, len);
+	if (err) {
+		msg("read() message");
+		return err;
+	}
+
+	read_body_buffer[len] = '\0';
+	std::cout << "client says: " << read_body_buffer << std::endl;
+
+
+	//write
+	const char* reply = "world";
+	char write_buffer[4 + strlen(reply)];
+	
+	len = (uint32_t) strlen(reply);
+	memcpy(write_buffer, &len, 4);
+	memcpy(write_buffer + 4, reply, len);
+
+	return write_all(connection_fd, write_buffer, len + 4);
 }
 int main() {
 	int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -54,7 +114,12 @@ int main() {
 			continue;
 		}
 
-		do_something(connection_fd);
+		while (true) {
+			int32_t err = one_request(connection_fd);
+			if (err) {
+				break;
+			}
+		}
 		close(connection_fd);
 
 	}
