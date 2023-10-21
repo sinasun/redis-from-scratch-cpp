@@ -4,14 +4,36 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
+#include <vector>
 
 #include "../utils/utils.h"
 
 const size_t k_max_msg = 4096;
+
+enum {
+	STATE_REQ = 0,
+	STATE_RES = 1,
+	STATE_END = 2,
+};
+
+struct Conn {
+	int fd = -1;
+	uint32_t state = 0;
+	size_t rbuf_size = 0;
+	//read buffer
+	uint8_t read_header_buffer[4];
+	uint8_t read_body_buffer[k_max_msg];
+	//write buffer
+	size_t write_buffer_size = 0;
+	size_t write_buffer_sent = 0;
+	uint8_t write_buffer[4 + k_max_msg];
+};
 
 static int32_t read_full(int fd, char *buf, size_t n) {
 	while (n > 0) {
@@ -82,8 +104,29 @@ static int32_t one_request(int connection_fd) {
 
 	return write_all(connection_fd, write_buffer, len + 4);
 }
+
+static void fd_set_non_blocking(int fd) {
+	errno = 0;
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (errno) {
+		die("fcntl error");
+		return;
+	}
+
+	flags |= O_NONBLOCK;
+
+	errno = 0;
+	(void) fcntl(fd, F_SETFL, flags);
+	if (errno) {
+		die("fcntl error flag");
+	}
+}
+
 int main() {
 	int fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0) {
+		die("socket()");
+	}
 
 	int val = 1;
 	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
@@ -103,24 +146,49 @@ int main() {
 	if (rv) {
 		die("listen()");
 	}
+	fd_set_non_blocking(fd);
+
+	std::vector<Conn *> clients_fd;
+	std::vector<struct pollfd> poll_args;
 
 	while (true) {
-		//accept
-		struct sockaddr_in client_addr = {};
-		socklen_t socklen = sizeof(client_addr);
-		
-		int connection_fd = accept(fd, (struct sockaddr *) &client_addr, &socklen);
-		if (connection_fd < 0) {
-			continue;
+		poll_args.clear();
+
+		struct pollfd pfd = {fd, POLLIN, 0};
+		poll_args.push_back(pfd);
+
+		for (Conn *client: clients_fd) {
+			if (!client) {
+				continue;
+			}
+			struct pollfd pfd = {};
+			pfd.fd = client -> fd;
+			pfd.events = (client -> state == STATE_REQ) ? POLLIN : POLLOUT;
+			pfd.events = pfd.events | POLLERR;
+			poll_args.push_back(pfd);
 		}
 
-		while (true) {
-			int32_t err = one_request(connection_fd);
-			if (err) {
-				break;
+		int rv = poll(poll_args.data(), (nfds_t) poll_args.size(), 1000);
+		if (rv < 0) {
+			die("poll()");
+		}
+
+		for (size_t i = 1; i < poll_args.size(); ++i) {
+			if (poll_args[i].revents) {
+				Conn *client = clients_fd[poll_args[i].fd];
+				connection_io(client);
+				if (client -> state == STATE_END) {
+					clients_fd[client->fd] = NULL;
+					(void) close(client->fd);
+					free(client);
+				}
 			}
 		}
-		close(connection_fd);
 
+		if (poll_args[0].revents) {
+			(void)accept_new_connection(clients_fd, fd);
+		}
 	}
+
+	return 0;
 }
