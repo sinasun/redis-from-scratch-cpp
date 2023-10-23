@@ -122,6 +122,15 @@ static void fd_set_non_blocking(int fd) {
 	}
 }
 
+static void connection_io(Conn *connection) {
+	if (connection->state == STATE_REQ) {
+		handle_request(connection);
+	} else if (connection->state == STATE_RES) {
+		handle_respond(connection);
+	} else {
+		assert(0);
+	}
+}
 int main() {
 	int fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (fd < 0) {
