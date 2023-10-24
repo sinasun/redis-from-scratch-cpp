@@ -122,6 +122,40 @@ static void fd_set_non_blocking(int fd) {
 	}
 }
 
+static void connection_put(std::vector<Conn *> &clients_fd, struct Conn *connection) {
+	if (clients_fd.size() <= (size_t) connection->fd) {
+		clients_fd.resize(connection->fd + 1);
+	}
+	clients_fd[connection->fd] = connection;
+}
+
+static int32_t accept_new_connection(std::vector<Conn *> &clients_fd, int fd) {
+	//accept 
+	struct sockaddr_in client_addr = {};
+	socklen_t socklen = sizeof(client_addr);
+	int connection_fd = accept(fd, (struct sockaddr *) &client_addr, &socklen);
+	if (connection_fd < 0) {
+		msg("accept() error");
+		return -1;
+	}
+
+	//set the new connection fd to nonblocking mode
+	fd_set_non_blocking(connection_fd);
+	//creating the struct Conn
+	struct Conn *connection = (struct Conn *)malloc(sizeof(struct Conn));
+	if (!connection) {
+		close(connection_fd);
+		return -1;
+	}
+
+	connection->fd = connection_fd;
+	connection->state = STATE_REQ;
+	connection->rbuf_size = 0;
+	connection->write_buffer_size = 0;
+	connection->write_buffer_sent = 0;
+	connection_put(clients_fd, connection);
+	return 0;
+}
 static void connection_io(Conn *connection) {
 	if (connection->state == STATE_REQ) {
 		handle_request(connection);
