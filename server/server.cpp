@@ -129,11 +129,11 @@ static void connection_put(std::vector<Conn *> &clients_fd, struct Conn *connect
 	clients_fd[connection->fd] = connection;
 }
 
-static int32_t accept_new_connection(std::vector<Conn *> &clients_fd, int fd) {
+static int32_t accept_new_connection(std::vector<Conn *> &clients_fd, int server_fd) {
 	//accept 
 	struct sockaddr_in client_addr = {};
 	socklen_t socklen = sizeof(client_addr);
-	int connection_fd = accept(fd, (struct sockaddr *) &client_addr, &socklen);
+	int connection_fd = accept(server_fd, (struct sockaddr *) &client_addr, &socklen);
 	if (connection_fd < 0) {
 		msg("accept() error");
 		return -1;
@@ -166,30 +166,30 @@ static void connection_io(Conn *connection) {
 	}
 }
 int main() {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0) {
+	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_fd < 0) {
 		die("socket()");
 	}
 
 	int val = 1;
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
+	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 
 	struct sockaddr_in addr = {};
 	addr.sin_family = AF_INET;
 	addr.sin_port = ntohs(1234);
 	addr.sin_addr.s_addr = ntohl(0);
 
-	int rv = bind(fd, (const sockaddr *) &addr, sizeof(addr));
-	if (rv) {
+	int err = bind(server_fd, (const sockaddr *) &addr, sizeof(addr));
+	if (err) {
 		die("bind()");
 	}
 
 	//listen
-	rv = listen(fd, SOMAXCONN);
-	if (rv) {
+	err = listen(server_fd, SOMAXCONN);
+	if (err) {
 		die("listen()");
 	}
-	fd_set_non_blocking(fd);
+	fd_set_non_blocking(server_fd);
 
 	std::vector<Conn *> clients_fd;
 	std::vector<struct pollfd> poll_args;
@@ -197,7 +197,7 @@ int main() {
 	while (true) {
 		poll_args.clear();
 
-		struct pollfd pfd = {fd, POLLIN, 0};
+		struct pollfd pfd = {server_fd, POLLIN, 0};
 		poll_args.push_back(pfd);
 
 		for (Conn *client: clients_fd) {
@@ -211,8 +211,8 @@ int main() {
 			poll_args.push_back(pfd);
 		}
 
-		int rv = poll(poll_args.data(), (nfds_t) poll_args.size(), 1000);
-		if (rv < 0) {
+		int err = poll(poll_args.data(), (nfds_t) poll_args.size(), 1000);
+		if (err < 0) {
 			die("poll()");
 		}
 
@@ -229,7 +229,7 @@ int main() {
 		}
 
 		if (poll_args[0].revents) {
-			(void)accept_new_connection(clients_fd, fd);
+			(void)accept_new_connection(clients_fd, server_fd);
 		}
 	}
 
