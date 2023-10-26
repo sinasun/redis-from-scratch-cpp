@@ -39,23 +39,26 @@ static int32_t write_all(int fd, char* buf, size_t n) {
 	return 0;
 }
 
-static int32_t query(int connection_fd, const char* body) {
-	uint32_t len = (uint32_t) strlen(body);
+static int32_t send_req(int connection_fd, const char *text) {
+	uint32_t len = (uint32_t) strlen(text);
 	char write_buffer[len + 4];
 	memcpy(write_buffer, &len, 4);
-	memcpy(write_buffer + 4, body, len);
+	memcpy(write_buffer + 4, text, len);
 
 	int32_t err = write_all(connection_fd, write_buffer, len + 4);
 	if (err) {
 		return err;
 	}
 
-	//read
+	return 0;
+}
+
+static int32_t read_res(int connection_fd) {
 	errno = 0;
 
 	char read_header_buffer[4];
 	char read_body_buffer[k_max_msg + 1];
-	err = read_full(connection_fd, read_header_buffer, 4);
+	int32_t err = read_full(connection_fd, read_header_buffer, 4);
 	if (err) {
 		if (errno == 0) {
 			msg("EOF");
@@ -64,7 +67,8 @@ static int32_t query(int connection_fd, const char* body) {
 		}
 		return err;
 	}
-
+	
+	uint32_t len;
 	memcpy(&len, read_header_buffer, 4);
 	if (len >= k_max_msg) {
 		msg("Message too long");
@@ -83,8 +87,8 @@ static int32_t query(int connection_fd, const char* body) {
 }
 
 int main() {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0) {
+	int connection_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (connection_fd < 0) {
 		die("socket()");
 	}
 
@@ -93,12 +97,26 @@ int main() {
 	addr.sin_port = ntohs(1234);
 	addr.sin_addr.s_addr = ntohl(INADDR_LOOPBACK); //localhost
 	
-	int rv = connect(fd, (const struct sockaddr *) &addr, sizeof(addr));
+	int rv = connect(connection_fd, (const struct sockaddr *) &addr, sizeof(addr));
 	if (rv) {
 		die("connect()");
 	}
 
-	query(fd, "hello1");
-	query(fd, "hello2");
-	close(fd);
+	const char *query_list[3] = {"hello1", "hello2", "hello3"};
+	for (size_t i = 0; i < 3; ++i) {
+		int32_t err = send_req(connection_fd, query_list[i]);
+		if (err) {
+			close(connection_fd);
+			return 0;
+		}
+	}
+
+	for (size_t i = 0; i < 3; ++i) {
+		int32_t err = read_res(connection_fd);
+		if (err) {
+			close(connection_fd);
+			return 0;
+		}
+	}
+	close(connection_fd);
 }
