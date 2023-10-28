@@ -25,85 +25,14 @@ enum {
 struct Conn {
 	int fd = -1;
 	uint32_t state = 0;
-	size_t rbuf_size = 0;
 	//read buffer
-	uint8_t read_header_buffer[4];
-	uint8_t read_body_buffer[k_max_msg];
+	size_t read_buffer_size = 0;
+	uint8_t read_buffer[4 + k_max_msg];
 	//write buffer
 	size_t write_buffer_size = 0;
 	size_t write_buffer_sent = 0;
 	uint8_t write_buffer[4 + k_max_msg];
 };
-
-static int32_t read_full(int fd, char *buf, size_t n) {
-	while (n > 0) {
-		ssize_t rv = read(fd, buf, n);
-		if (rv <= 0) {
-			return -1;
-		}
-		assert((size_t) rv <= n);
-		n -= (size_t) rv;
-		buf += rv;
-	}
-	return 0;
-}
-
-static int32_t write_all(int fd, const char *buf, size_t n) {
-	while (n > 0) {
-		ssize_t rv = write(fd, buf, n);
-		if (rv <= 0) {
-			return -1;
-		}
-		assert((size_t) rv <= n);
-		n -= (size_t) rv;
-		buf += rv;
-	}
-
-	return 0;
-}
-
-static int32_t one_request(int connection_fd) {
-	char read_header_buffer[4];
-	char read_body_buffer[k_max_msg + 1];
-	errno = 0;
-
-	int32_t err = read_full(connection_fd, read_header_buffer, 4);
-	if (err) {
-		if (errno == 0) {
-			msg("EOF");		
-		} else {
-			msg("read() error");
-		}
-		return err;
-	}
-	
-	uint32_t len = 0;
-	memcpy(&len, read_header_buffer, 4);
-	if (len >= k_max_msg) {
-		msg("Message too long");
-		return -1;
-	}
-
-	err = read_full(connection_fd, read_body_buffer, len);
-	if (err) {
-		msg("read() message");
-		return err;
-	}
-
-	read_body_buffer[len] = '\0';
-	std::cout << "client says: " << read_body_buffer << std::endl;
-
-
-	//write
-	const char* reply = "world";
-	char write_buffer[4 + strlen(reply)];
-	
-	len = (uint32_t) strlen(reply);
-	memcpy(write_buffer, &len, 4);
-	memcpy(write_buffer + 4, reply, len);
-
-	return write_all(connection_fd, write_buffer, len + 4);
-}
 
 static void fd_set_non_blocking(int fd) {
 	errno = 0;
@@ -150,12 +79,89 @@ static int32_t accept_new_connection(std::vector<Conn *> &clients_fd, int server
 
 	connection->fd = connection_fd;
 	connection->state = STATE_REQ;
-	connection->rbuf_size = 0;
+	connection->read_buffer_size = 0;
 	connection->write_buffer_size = 0;
 	connection->write_buffer_sent = 0;
 	connection_put(clients_fd, connection);
 	return 0;
 }
+
+static int32_t do_request(
+    const uint8_t *req, uint32_t reqlen,
+    uint32_t *rescode, uint8_t *res, uint32_t *reslen)
+{
+	return 0;
+
+}
+static void read_request(Conn *connection) {
+	if (connection->read_buffer_size) {
+		// Not enough data to read, wait for the next recursion
+		return;
+	}
+
+	uint32_t len = 0;
+	memcpy(&len, connection->read_buffer, 4);
+	if (len > k_max_msg) {
+		msg("message too long");
+		connection->state = STATE_END;
+		return;
+	}
+
+	if (len > connection->read_buffer_size - 4) {
+		// Not enough data to read, wait for the next recursion
+		return;
+	}
+
+    uint32_t rescode = 0;
+    uint32_t wlen = 0;
+    int32_t err = do_request(
+        &connection->read_buffer[4], len,
+        &rescode, &connection->write_buffer[4 + 4], &wlen
+    );
+    if (err) {
+        connection->state = STATE_END;
+        return;
+    }
+
+	if (connection->state == STATE_REQ) read_request(connection); //there are multiple commands from one connection
+}
+static void handle_request(Conn *connection) {
+	//try to fill buffer
+	assert(connection->read_buffer_size < sizeof(connection->read_buffer));
+	ssize_t bytes_read = 0;
+
+	do {
+		size_t capacity_remaining = sizeof(connection->read_buffer) - connection->read_buffer_size;
+		bytes_read = read(connection->fd, connection->read_buffer, capacity_remaining);
+	} while(bytes_read < 0 && bytes_read == EINTR); //try again if there is error and the error is interrupt
+
+	if (bytes_read < 0 && bytes_read == EAGAIN) {
+		return;
+	}
+	
+	if (bytes_read < 0) {
+		msg("read() error");
+		connection->state = STATE_END;
+		return;
+	}
+
+	if (bytes_read == 0) {
+		if (connection->read_buffer_size > 0) {
+			msg("EOF unexpected");
+		} else {
+			msg("EOF");
+		}
+
+		connection->state = STATE_END;
+		return;
+	}
+
+	connection->read_buffer_size += (size_t) bytes_read;
+	//parse
+	read_request(connection);
+	if (connection->state == STATE_REQ) handle_request(connection); //there are multiple request from one connection
+}
+
 static void connection_io(Conn *connection) {
 	if (connection->state == STATE_REQ) {
 		handle_request(connection);
@@ -174,17 +180,17 @@ int main() {
 	int val = 1;
 	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 
-	struct sockaddr_in addr = {};
-	addr.sin_family = AF_INET;
-	addr.sin_port = ntohs(1234);
-	addr.sin_addr.s_addr = ntohl(0);
+	struct sockaddr_in server_info = {};
+	server_info.sin_family = AF_INET; //TCP
+	server_info.sin_port = ntohs(1234); //port number
+	server_info.sin_addr.s_addr = ntohl(0); //localhost
 
-	int err = bind(server_fd, (const sockaddr *) &addr, sizeof(addr));
+	int err = bind(server_fd, (const sockaddr *) &server_info, sizeof(server_info));
 	if (err) {
 		die("bind()");
 	}
 
-	//listen
+	//listen to server
 	err = listen(server_fd, SOMAXCONN);
 	if (err) {
 		die("listen()");
@@ -197,18 +203,18 @@ int main() {
 	while (true) {
 		poll_args.clear();
 
-		struct pollfd pfd = {server_fd, POLLIN, 0};
-		poll_args.push_back(pfd);
+		struct pollfd server_poll = {server_fd, POLLIN, 0};
+		poll_args.push_back(server_poll);
 
 		for (Conn *client: clients_fd) {
 			if (!client) {
 				continue;
 			}
-			struct pollfd pfd = {};
-			pfd.fd = client -> fd;
-			pfd.events = (client -> state == STATE_REQ) ? POLLIN : POLLOUT;
-			pfd.events = pfd.events | POLLERR;
-			poll_args.push_back(pfd);
+			struct pollfd client_poll = {};
+			client_poll.fd = client->fd;
+			client_poll.events = (client->state == STATE_REQ) ? POLLIN : POLLOUT;
+			client_poll.events = client_poll.events | POLLERR;
+			poll_args.push_back(client_poll);
 		}
 
 		int err = poll(poll_args.data(), (nfds_t) poll_args.size(), 1000);
@@ -220,7 +226,7 @@ int main() {
 			if (poll_args[i].revents) {
 				Conn *client = clients_fd[poll_args[i].fd];
 				connection_io(client);
-				if (client -> state == STATE_END) {
+				if (client->state == STATE_END) {
 					clients_fd[client->fd] = NULL;
 					(void) close(client->fd);
 					free(client);
