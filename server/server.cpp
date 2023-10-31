@@ -208,6 +208,33 @@ static void send_respond(Conn *connection) {
 
 }
 
+static void handle_respond(Conn *connection) {
+    ssize_t bytes_sent= 0;
+    do {
+        size_t remain = connection->write_buffer_size - connection->write_buffer_sent;
+        bytes_sent= write(connection->fd, &connection->write_buffer[connection->write_buffer_sent], remain);
+    } while (bytes_sent< 0 && errno == EINTR);
+    if (bytes_sent< 0 && errno == EAGAIN) {
+        return;
+    }
+    if (bytes_sent< 0) {
+        msg("write() error");
+        connection->state = STATE_END;
+        return;
+    }
+    connection->write_buffer_sent += (size_t)bytes_sent;
+    assert(connection->write_buffer_sent <= connection->write_buffer_size);
+	//sent is equal to size so we have sent everything
+    if (connection->write_buffer_sent == connection->write_buffer_size) {
+        connection->state = STATE_REQ;
+        connection->write_buffer_sent = 0;
+        connection->write_buffer_size = 0;
+        return;
+    }
+    // still got some data, try again
+	handle_respond(connection);
+}
+
 static void read_request(Conn *connection) {
 	if (connection->read_buffer_size) {
 		// Not enough data to read, wait for the next recursion
@@ -279,13 +306,12 @@ static void handle_request(Conn *connection) {
 		} else {
 			msg("EOF");
 		}
-
 		connection->state = STATE_END;
 		return;
 	}
 
 	connection->read_buffer_size += (size_t) bytes_read;
-	//parse
+	//parse and do the request
 	read_request(connection);
 	if (connection->state == STATE_REQ) handle_request(connection); //there are multiple request from one connection
 }
