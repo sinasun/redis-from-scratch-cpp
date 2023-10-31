@@ -165,11 +165,11 @@ static uint32_t do_del_request(
 
 static Request_type get_request_type(const std::vector<std::string> &command) {
 	const std::string word = command[0];
-	if (command.size() == 2 && strcasecmp(word.c_str(), "get")) {
+	if (command.size() == 2 && !strcasecmp(word.c_str(), "get")) {
 		return GET;
-	} else if (command.size() == 3 && strcasecmp(word.c_str(), "set")) {
+	} else if (command.size() == 3 && !strcasecmp(word.c_str(), "set")) {
 		return SET;
-	} else if (command.size() == 3 && strcasecmp(word.c_str(), "del")) {
+	} else if (command.size() == 2 && !strcasecmp(word.c_str(), "del")) {
 		return DEL;
 	}
 
@@ -204,20 +204,16 @@ static int32_t do_request(
 	return 0;
 }
 
-static void send_respond(Conn *connection) {
-
-}
-
 static void handle_respond(Conn *connection) {
     ssize_t bytes_sent= 0;
     do {
-        size_t remain = connection->write_buffer_size - connection->write_buffer_sent;
-        bytes_sent= write(connection->fd, &connection->write_buffer[connection->write_buffer_sent], remain);
-    } while (bytes_sent< 0 && errno == EINTR);
-    if (bytes_sent< 0 && errno == EAGAIN) {
+        size_t remaining = connection->write_buffer_size - connection->write_buffer_sent;
+        bytes_sent = write(connection->fd, &connection->write_buffer[connection->write_buffer_sent], remaining);
+    } while (bytes_sent < 0 && errno == EINTR);
+    if (bytes_sent < 0 && errno == EAGAIN) {
         return;
     }
-    if (bytes_sent< 0) {
+    if (bytes_sent < 0) {
         msg("write() error");
         connection->state = STATE_END;
         return;
@@ -236,20 +232,20 @@ static void handle_respond(Conn *connection) {
 }
 
 static void read_request(Conn *connection) {
-	if (connection->read_buffer_size) {
+	if (connection->read_buffer_size < 4) {
 		// Not enough data to read, wait for the next recursion
 		return;
 	}
 
-	uint32_t len = 0;
-	memcpy(&len, connection->read_buffer, 4);
-	if (len > k_max_msg) {
+	uint32_t length = 0;
+	memcpy(&length, connection->read_buffer, 4);
+	if (length > k_max_msg) {
 		msg("message too long");
 		connection->state = STATE_END;
 		return;
 	}
 
-	if (len > connection->read_buffer_size - 4) {
+	if (length > connection->read_buffer_size - 4) {
 		// Not enough data to read, wait for the next recursion
 		return;
 	}
@@ -257,7 +253,7 @@ static void read_request(Conn *connection) {
     Respond_code respond_code;
     uint32_t write_length = 0;
     int32_t err = do_request(
-        &connection->read_buffer[4], len,
+        &connection->read_buffer[4], length,
         &respond_code, &connection->write_buffer[4 + 4], &write_length
     );
     if (err) {
@@ -270,10 +266,11 @@ static void read_request(Conn *connection) {
 	memcpy(&connection->write_buffer + 4, (uint32_t *)&respond_code, 4);
 	connection->write_buffer_size = 4 + write_length;
 
-	size_t remain = connection->read_buffer_size - 4 - len;
+	size_t remain = connection->read_buffer_size - 4 - length;
 	if (remain) {
-		memmove(connection->read_buffer, &connection->read_buffer[4 + len], remain);
+		memmove(connection->read_buffer, &connection->read_buffer[4 + length], remain);
 	}
+	connection->read_buffer_size = remain;
 
 	connection->state = STATE_RES;
 	handle_respond(connection);
@@ -295,7 +292,6 @@ static void handle_request(Conn *connection) {
 	}
 	
 	if (bytes_read < 0) {
-		msg("read() error");
 		connection->state = STATE_END;
 		return;
 	}
@@ -311,6 +307,7 @@ static void handle_request(Conn *connection) {
 	}
 
 	connection->read_buffer_size += (size_t) bytes_read;
+	assert(connection->read_buffer_size <= sizeof(connection->read_buffer));
 	//parse and do the request
 	read_request(connection);
 	if (connection->state == STATE_REQ) handle_request(connection); //there are multiple request from one connection
