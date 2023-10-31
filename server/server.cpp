@@ -11,15 +11,30 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 #include <vector>
+#include <map>
 
 #include "../utils/utils.h"
 
 const size_t k_max_msg = 4096;
+const size_t k_max_args = 1024;
 
 enum {
 	STATE_REQ = 0,
 	STATE_RES = 1,
 	STATE_END = 2,
+};
+
+enum Request_type {
+	GET = 0, 
+	SET = 1, 
+	DEL = 2,
+	INVALID_REQUEST = 3,
+};
+
+enum Respond_code : uint32_t {
+	RES_OK = 0,
+	RES_ERR = 1,
+	RES_NX = 2,
 };
 
 struct Conn {
@@ -33,6 +48,8 @@ struct Conn {
 	size_t write_buffer_sent = 0;
 	uint8_t write_buffer[4 + k_max_msg];
 };
+
+static std::map<std::string, std::string> g_map;
 
 static void fd_set_non_blocking(int fd) {
 	errno = 0;
@@ -86,13 +103,111 @@ static int32_t accept_new_connection(std::vector<Conn *> &clients_fd, int server
 	return 0;
 }
 
-static int32_t do_request(
-    const uint8_t *req, uint32_t reqlen,
-    uint32_t *rescode, uint8_t *res, uint32_t *reslen)
+static int32_t parse_request(
+    const uint8_t *data, size_t len, std::vector<std::string> &out) {
+    if (len < 4) {
+        return -1;
+    }
+    uint32_t n = 0;
+    memcpy(&n, &data[0], 4);
+    if (n > k_max_args) {
+        return -1;
+    }
+
+    size_t pos = 4;
+    while (n--) {
+        if (pos + 4 > len) {
+            return -1;
+        }
+        uint32_t sz = 0;
+        memcpy(&sz, &data[pos], 4);
+        if (pos + 4 + sz > len) {
+            return -1;
+        }
+        out.push_back(std::string((char *)&data[pos + 4], sz));
+        pos += 4 + sz;
+    }
+
+    if (pos != len) {
+        return -1;
+    }
+    return 0;
+}
+static uint32_t do_get_request(const std::vector<std::string> &cmd, uint8_t *respond, uint32_t *respond_length) {
+	if (!g_map.count(cmd[1])) {
+		return RES_NX;
+	}
+	std::string &val = g_map[cmd[1]];
+	assert(val.size() <= k_max_msg);
+	memcpy(respond, val.data(), val.size());
+	*respond_length = (uint32_t) val.size();
+	return RES_OK;
+}
+
+
+static uint32_t do_set_request(
+    const std::vector<std::string> &command, uint8_t *respond, uint32_t *respond_length)
 {
+    (void)respond;
+    (void)respond_length;
+    g_map[command[1]] = command[2];
+    return RES_OK;
+}
+
+static uint32_t do_del_request(
+    const std::vector<std::string> &command, uint8_t *respond, uint32_t *respond_length)
+{
+    (void)respond;
+    (void)respond_length;
+    g_map.erase(command[1]);
+    return RES_OK;
+}
+
+static Request_type get_request_type(const std::vector<std::string> &command) {
+	const std::string word = command[0];
+	if (command.size() == 2 && strcasecmp(word.c_str(), "get")) {
+		return GET;
+	} else if (command.size() == 3 && strcasecmp(word.c_str(), "set")) {
+		return SET;
+	} else if (command.size() == 3 && strcasecmp(word.c_str(), "del")) {
+		return DEL;
+	}
+
+	return INVALID_REQUEST;
+}
+static int32_t do_request(
+    const uint8_t *request, uint32_t request_length,
+    Respond_code *respond_code, uint8_t *respond, uint32_t *respond_length)
+{
+	std::vector<std::string> command;
+	if (0 != parse_request(request, request_length, command)) {
+		msg("bad request");
+		return -1;
+	}
+
+	Request_type request_type = get_request_type(command);
+	if (request_type == GET) {
+		do_get_request(command, respond, respond_length);
+	} else if (request_type == SET) {
+		do_set_request(command, respond, respond_length);
+	} else if (request_type == DEL) {
+		do_del_request(command, respond, respond_length);
+	} else {
+		msg("invalid request");
+		*respond_code = RES_ERR;
+		const char *msg = "Unknown commnad";
+		strcpy((char *)respond, msg);
+		*respond_length = strlen(msg);
+		return -1;
+	}
+	
 	return 0;
+}
+
+static void send_respond(Conn *connection) {
 
 }
+
 static void read_request(Conn *connection) {
 	if (connection->read_buffer_size) {
 		// Not enough data to read, wait for the next recursion
@@ -112,19 +227,32 @@ static void read_request(Conn *connection) {
 		return;
 	}
 
-    uint32_t rescode = 0;
-    uint32_t wlen = 0;
+    Respond_code respond_code;
+    uint32_t write_length = 0;
     int32_t err = do_request(
         &connection->read_buffer[4], len,
-        &rescode, &connection->write_buffer[4 + 4], &wlen
+        &respond_code, &connection->write_buffer[4 + 4], &write_length
     );
     if (err) {
         connection->state = STATE_END;
         return;
     }
 
+	write_length += 4;
+	memcpy(&connection->write_buffer, &write_length, 4);
+	memcpy(&connection->write_buffer + 4, (uint32_t *)&respond_code, 4);
+	connection->write_buffer_size = 4 + write_length;
+
+	size_t remain = connection->read_buffer_size - 4 - len;
+	if (remain) {
+		memmove(connection->read_buffer, &connection->read_buffer[4 + len], remain);
+	}
+
+	connection->state = STATE_RES;
+	handle_respond(connection);
 	if (connection->state == STATE_REQ) read_request(connection); //there are multiple commands from one connection
 }
+
 static void handle_request(Conn *connection) {
 	//try to fill buffer
 	assert(connection->read_buffer_size < sizeof(connection->read_buffer));
