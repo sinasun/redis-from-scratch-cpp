@@ -18,11 +18,11 @@ This Redis-inspired project, implemented from scratch in C++, offers the followi
 
 - [x] **Sorted Sets:** Incorporates an AVL tree for managing sorted sets efficiently.
 
-- [ ]**Timers:** Enhances the event loop with timers for time-based operations.
+- [ ] **Timers:** Enhances the event loop with timers for time-based operations.
 
-- [ ]**Time-to-Live (TTL):** Manages key expiration using a heap data structure to handle TTL.
+- [ ] **Time-to-Live (TTL):** Manages key expiration using a heap data structure to handle TTL.
 
-- [ ]**Thread Pool:** Utilizes a thread pool for asynchronous task handling and improved server performance.
+- [ ] **Thread Pool:** Utilizes a thread pool for asynchronous task handling and improved server performance.
 
 ---
 
