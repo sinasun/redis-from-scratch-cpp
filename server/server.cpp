@@ -13,6 +13,8 @@
 #include <vector>
 #include <map>
 
+#include "hashtable.h"
+#include "avl.h"
 #include "../utils/utils.h"
 
 const size_t k_max_msg = 4096;
