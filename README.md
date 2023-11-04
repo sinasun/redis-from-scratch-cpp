@@ -1,5 +1,7 @@
 # Redis Clone from Scratch in C++
 
+This project is an implementation of a Redis-like in-memory data store using C++. It was created based on a tutorial, serving as a practical exercise to gain hands-on experience in building a key-value store with features inspired by Redis.
+
 ## Features
 
 This Redis-inspired project, implemented from scratch in C++, offers the following key features:
@@ -24,7 +26,50 @@ This Redis-inspired project, implemented from scratch in C++, offers the followi
 
 - [ ] **Thread Pool:** Utilizes a thread pool for asynchronous task handling and improved server performance.
 
+## Getting Started
+
+To run and test this Redis implementation, follow these steps:
+
+1. Clone the repository to your local machine:
+
+   ```bash
+   git clone https://github.com/sinasun/redis-from-scratch-cpp
+   ```
+
+   Build the Utils:
+
+   ```bashe
+   cd redis-from-scratch-cpp/utils
+   make
+   ```
+
+   Build and run the server:
+
+   ```bashe
+   cd ../server
+   make
+   ./server
+   ```
+
+   Build and test client in another terminal:
+
+   ```bashe
+   cd redis-from-scratch-cpp/client
+   make
+   ./client SET mykey myvalue
+   ./client GET mykey
+   ```
+
+## Contributing
+
+Contributions are welcome! Feel free to open issues or submit pull requests to improve the project.
+
+## License
+
+This project is licensed under the MIT - see the [LICENSE.md](LICENSE.md) file for details.
+
 ---
 
-This project aims to provide a basic Redis-like key-value store with key features while also serving as a learning resource for building such systems from the ground up.
+## Acknowledgments
 
+- The project is based on a book by [James Smith](https://www.amazon.com/dp/B0BT2CT8XY), which provided valuable insights into building a Redis-like system in C++.
